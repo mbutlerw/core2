@@ -2551,7 +2551,7 @@
                                    apply-mode columns independent-relation dependent-relation]
   (let [independent-projection (relation-columns independent-relation)
         smap (set/map-invert columns)
-        row-number-sym '$row_number$
+        row-number-sym (symbol (str "$row_number_" (rand-int 1000000) "$"))
         columns (remove-unused-correlated-columns columns dependent-relation)
         post-group-by-projection (remove symbol? post-group-by-projection)]
     (cond->> [:group-by (vec (concat independent-projection
