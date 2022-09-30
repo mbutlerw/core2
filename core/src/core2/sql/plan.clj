@@ -2815,7 +2815,15 @@
     [:project (vec (concat (relation-columns independent-relation)
                            (w/postwalk-replace (set/map-invert columns) projection)))
      (let [columns (remove-unused-correlated-columns columns dependent-relation)]
-       [:apply :cross-join columns independent-relation dependent-relation])]))
+       [:apply :cross-join columns independent-relation dependent-relation])]
+
+    [:apply mode columns independent-relation [:project projection dependent-relation]]
+    ;;=>
+    (when (#{:left-outer-join :single-join} mode)
+      [:project (vec (concat (relation-columns independent-relation)
+                             (w/postwalk-replace (set/map-invert columns) projection)))
+       (let [columns (remove-unused-correlated-columns columns dependent-relation)]
+         [:apply mode columns independent-relation dependent-relation])])))
 
 (defn- decorrelate-apply-rule-8
   "R A× (G A,F E) = G A ∪ columns(R),F (R A× E)"
@@ -3044,7 +3052,7 @@
                   successful-rewrite)))
             (instrument-rules [rules]
               (->> rules
-                   (mapv (if instrument-rules? instrument-rule deref))
+                   (mapv (if true #_instrument-rules? instrument-rule deref))
                    (apply some-fn)))]
       (-> (->> plan
                (r/vector-zip)
@@ -3056,7 +3064,9 @@
                (r/node)
                (add-projection-fn))
 
-          (vary-meta assoc :fired-rules @!fired-rules)))))
+          ((fn [x]
+            #_(clojure.pprint/pprint @!fired-rules)
+            (vary-meta x assoc :fired-rules @!fired-rules)))))))
 
 (defn plan-query
   ([ag] (plan-query ag {}))
