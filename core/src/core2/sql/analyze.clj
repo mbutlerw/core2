@@ -767,9 +767,14 @@
                                                               (find-decl env (first identifiers)))
           outer-reference? (and table (< ^long table-scope-id ^long column-scope-id))
           group-env (group-env ag)
+          #_#__ (do
+              (clojure.pprint/pprint identifiers)
+              (clojure.pprint/pprint (local-env group-env))
+              (clojure.pprint/pprint group-env))
           column-reference-type (reduce
                                  (fn [acc {:keys [grouping-columns
                                                   group-column-reference-type]}]
+                                   #_(prn :acc acc :gc grouping-columns :gcrf group-column-reference-type)
                                    (if (contains? (set grouping-columns) identifiers)
                                      (reduced group-column-reference-type)
                                      acc))

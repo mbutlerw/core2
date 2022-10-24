@@ -991,13 +991,21 @@
             predicate (list co (expr rvp) (first (subquery-projection-symbols qe)))
             in-value-list-plan (plan qe)
             subquery-plan [:rename (subquery-reference-symbol qe) in-value-list-plan]
+            #_#__ (do
+                     (clojure.pprint/pprint (r/znode rvp))
+                     (clojure.pprint/pprint (r/znode ipp2))
+                 (prn :predicate predicate :in-value-list-plan in-value-list-plan)
+                 (clojure.pprint/pprint (find-aggr-out-column-refs predicate))
+                 (clojure.pprint/pprint (find-table-operators in-value-list-plan))
+                 )
             column->param (merge
                             (build-column->param (find-aggr-out-column-refs predicate))
-                            (build-column->param
+                            #_(build-column->param
                               (find-aggr-out-column-refs
                                 (find-table-operators in-value-list-plan)))
                             (correlated-column->param qe scope-id join-table)
                             (correlated-column->param rvp scope-id join-table))]
+        #_(clojure.pprint/pprint column->param)
         {:type :quantified-comparison
          :quantifier (if (= co '=) :some :all)
          :plan subquery-plan
@@ -3081,6 +3089,7 @@
 
      (try
        (let [plan (plan ag)]
+         #_(clojure.pprint/pprint plan)
          (if (#{:insert :delete :update :erase} (first plan))
            (let [[dml-op dml-op-opts plan] plan]
              [dml-op dml-op-opts
