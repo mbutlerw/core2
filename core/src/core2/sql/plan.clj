@@ -1181,6 +1181,12 @@
         disjuncts (concat [disjuncts])))
     (flatten-expr and-predicate? predicate)))
 
+(defn wrap-relation-with-selects [relation predicates]
+  (reduce
+    (fn [acc predicate]
+      [:select predicate acc])
+    relation predicates))
+
 (defn- plan-subquery-containg-clause [sc relation join-table]
   (let [sc-expr (expr sc)
         predicates (predicate-conjunctive-clauses sc-expr)
@@ -1195,49 +1201,48 @@
     [new-relation unused-predicates]))
 
 (defn- wrap-with-select [sc relation]
-  (apply reduce
-         (fn [acc predicate]
-           [:select predicate acc])
-         (plan-subquery-containg-clause sc relation nil)))
+  (apply wrap-relation-with-selects (plan-subquery-containg-clause sc relation nil)))
 
 (defn- needs-group-by? [z]
   (boolean (:grouping-columns (sem/local-env (sem/group-env z)))))
 
 (defn- wrap-with-group-by [te relation]
-  (let [{:keys [grouping-columns]} (sem/local-env (sem/group-env te))
-        current-env (sem/env te)
-        grouping-columns (vec (for [[table-name column] grouping-columns
-                                    :let [table (sem/find-decl current-env table-name)]]
-                                (id-symbol table-name (:id table) column)))
-        aggregates (r/collect-stop
-                    (fn [z]
-                      (r/zcase z
-                        :aggregate_function [z]
-                        :subquery []
-                        nil))
-                    (sem/scope-element te))
-        group-by (for [aggregate aggregates]
-                   (r/zmatch aggregate
-                     [:aggregate_function [:general_set_function [:computational_operation sf] ^:z ve]]
-                     {:in {(aggregate-symbol "agg_in" aggregate) (expr ve)}
-                      :out {(aggregate-symbol "agg_out" aggregate)
-                            (list (symbol (str/lower-case sf)) (aggregate-symbol "agg_in" aggregate))}}
+  (if (needs-group-by? te)
+    (let [{:keys [grouping-columns]} (sem/local-env (sem/group-env te))
+          current-env (sem/env te)
+          grouping-columns (vec (for [[table-name column] grouping-columns
+                                      :let [table (sem/find-decl current-env table-name)]]
+                                  (id-symbol table-name (:id table) column)))
+          aggregates (r/collect-stop
+                       (fn [z]
+                         (r/zcase z
+                                  :aggregate_function [z]
+                                  :subquery []
+                                  nil))
+                       (sem/scope-element te))
+          group-by (for [aggregate aggregates]
+                     (r/zmatch aggregate
+                               [:aggregate_function [:general_set_function [:computational_operation sf] ^:z ve]]
+                               {:in {(aggregate-symbol "agg_in" aggregate) (expr ve)}
+                                :out {(aggregate-symbol "agg_out" aggregate)
+                                      (list (symbol (str/lower-case sf)) (aggregate-symbol "agg_in" aggregate))}}
 
-                     [:aggregate_function [:general_set_function [:computational_operation sf] [:set_quantifier sq] ^:z ve]]
-                     {:in {(aggregate-symbol "agg_in" aggregate) (expr ve)}
-                      :out {(aggregate-symbol "agg_out" aggregate)
-                            (list (symbol (str (str/lower-case sf) "-" (str/lower-case sq))) (aggregate-symbol "agg_in" aggregate))}}
+                               [:aggregate_function [:general_set_function [:computational_operation sf] [:set_quantifier sq] ^:z ve]]
+                               {:in {(aggregate-symbol "agg_in" aggregate) (expr ve)}
+                                :out {(aggregate-symbol "agg_out" aggregate)
+                                      (list (symbol (str (str/lower-case sf) "-" (str/lower-case sq))) (aggregate-symbol "agg_in" aggregate))}}
 
-                     [:aggregate_function "COUNT" [:asterisk "*"]]
-                     {:in {(aggregate-symbol "agg_in" aggregate) 1}
-                      :out {(aggregate-symbol "agg_out" aggregate)
-                            (list 'count (aggregate-symbol "agg_in" aggregate))}}
+                               [:aggregate_function "COUNT" [:asterisk "*"]]
+                               {:in {(aggregate-symbol "agg_in" aggregate) 1}
+                                :out {(aggregate-symbol "agg_out" aggregate)
+                                      (list 'count (aggregate-symbol "agg_in" aggregate))}}
 
-                     (throw (err/illegal-arg :core2.sql/parse-error
-                                             {::err/message "unknown aggregation function"}))))]
-    [:group-by (->> (map :out group-by)
-                    (into grouping-columns))
-     [:map (mapv :in group-by) relation]]))
+                               (throw (err/illegal-arg :core2.sql/parse-error
+                                                       {::err/message "unknown aggregation function"}))))]
+      [:group-by (->> (map :out group-by)
+                      (into grouping-columns))
+       [:map (mapv :in group-by) relation]])
+    relation))
 
 (defn- wrap-with-order-by [ssl relation]
   (let [projection (first (sem/projected-columns ssl))
@@ -1309,8 +1314,73 @@
                                        (qualified-projection-symbol column)}
                                       {unique-unqualified-column-name
                                        (expr (r/$ derived-column 1))})))
-        relation (wrap-with-apply sl (plan te))]
-    [:project qualified-projection relation]))
+        table-expression-relation
+        (r/zmatch te
+                  [:table_expression ^:z fc]
+                  ;;=>
+                  (->> (plan fc)
+                       (wrap-with-apply sl)
+                       (wrap-with-group-by te))
+
+                  [:table_expression ^:z fc [:group_by_clause _ _ _]]
+                  ;;=>
+                  (->> (plan fc)
+                       (wrap-with-apply sl)
+                       (wrap-with-group-by te))
+
+                  [:table_expression ^:z fc [:where_clause _ ^:z sc]]
+                  ;;=>
+                  (->> (plan fc)
+                       (wrap-with-select sc)
+                       (wrap-with-apply sl)
+                       (wrap-with-group-by te))
+
+                  [:table_expression ^:z fc [:where_clause _ ^:z sc] [:group_by_clause _ _ _]]
+                  ;;=>
+                  (->> (plan fc)
+                       (wrap-with-select sc)
+                       (wrap-with-apply sl)
+                       (wrap-with-group-by te))
+
+                  [:table_expression ^:z fc [:having_clause _ ^:z hsc]]
+                  ;;=>
+                  (let [[relation predicates] (plan-subquery-containg-clause hsc (plan fc) nil)]
+                    (wrap-relation-with-selects
+                      (->> relation
+                           (wrap-with-apply sl)
+                           (wrap-with-group-by te))
+                      predicates))
+
+                  [:table_expression ^:z fc [:group_by_clause _ _ _] [:having_clause _ ^:z hsc]]
+                  ;;=>
+                  (let [[relation predicates] (plan-subquery-containg-clause hsc (plan fc) nil)]
+                    (wrap-relation-with-selects
+                      (->> relation
+                           (wrap-with-apply sl)
+                           (wrap-with-group-by te))
+                      predicates))
+
+                  [:table_expression ^:z fc [:where_clause _ ^:z sc] [:having_clause _ ^:z hsc]]
+                  ;;=>
+                  (let [[relation predicates] (plan-subquery-containg-clause hsc (plan fc) nil)]
+                    (wrap-relation-with-selects
+                      (->> relation
+                           (wrap-with-select sc)
+                           (wrap-with-apply sl)
+                           (wrap-with-group-by te))
+                      predicates))
+
+                  [:table_expression ^:z fc [:where_clause _ ^:z sc] [:group_by_clause _ _ _] [:having_clause _ ^:z hsc]]
+                  ;;=>
+                  (let [[relation predicates] (plan-subquery-containg-clause hsc (plan fc) nil)]
+                    (wrap-relation-with-selects
+                      (->> relation
+                           (wrap-with-select sc)
+                           (wrap-with-apply sl)
+                           (wrap-with-group-by te))
+                      predicates)))]
+
+    [:project qualified-projection table-expression-relation]))
 
 (defn- build-set-op
   ([set-op lhs rhs] (build-set-op set-op lhs rhs false))
@@ -1786,10 +1856,9 @@
 (def app-time-col? (comp #{"application_time_start" "application_time_end"} :identifier))
 
 (defn plan-qualified-join [join-type lhs rhs sc]
-  (let [planned-rhs (apply reduce
-                           (fn [acc predicate]
-                             [:select predicate acc])
-                           (plan-subquery-containg-clause sc (plan rhs) (sem/table rhs))) ;; equiv to wrap-with-select
+  (let [planned-rhs (apply
+                      wrap-relation-with-selects
+                      (plan-subquery-containg-clause sc (plan rhs) (sem/table rhs))) ;; equiv to wrap-with-select
         ;; with extra param, should probably be rolled back in eventually.
          apply-params (correlated-column->param sc (sem/id (sem/scope-element sc)) (sem/table lhs))]
     (if (= join-type "INNER")
@@ -1868,47 +1937,6 @@
 
     [:query_term ^:z qt "INTERSECT" "DISTINCT" ^:z qp]
     [:distinct (build-set-op :intersect qt qp)]
-
-    [:table_expression ^:z fc]
-    ;;=>
-    (cond->> (plan fc)
-      (needs-group-by? z) (wrap-with-group-by z))
-
-    [:table_expression ^:z fc [:group_by_clause _ _ _]]
-    ;;=>
-    (wrap-with-group-by z (plan fc))
-
-    [:table_expression ^:z fc [:where_clause _ ^:z sc]]
-    ;;=>
-    (cond->> (wrap-with-select sc (plan fc))
-      (needs-group-by? z) (wrap-with-group-by z))
-
-    [:table_expression ^:z fc [:where_clause _ ^:z sc] [:group_by_clause _ _ _]]
-    ;;=>
-    (->> (wrap-with-select sc (plan fc))
-         (wrap-with-group-by z))
-
-    [:table_expression ^:z fc [:where_clause _ ^:z sc] [:group_by_clause _ _ _] [:having_clause _ ^:z hsc]]
-    ;;=>
-    (->> (wrap-with-select sc (plan fc))
-         (wrap-with-group-by z)
-         (wrap-with-select hsc))
-
-    [:table_expression ^:z fc [:where_clause _ ^:z sc] [:having_clause _ ^:z hsc]]
-    ;;=>
-    (->> (wrap-with-select sc (plan fc))
-         (wrap-with-group-by z)
-         (wrap-with-select hsc))
-
-    [:table_expression ^:z fc [:group_by_clause _ _ _] [:having_clause _ ^:z hsc]]
-    ;;=>
-    (->> (wrap-with-group-by z (plan fc))
-         (wrap-with-select hsc))
-
-    [:table_expression ^:z fc [:having_clause _ ^:z hsc]]
-    ;;=>
-    (->> (wrap-with-group-by z (plan fc))
-         (wrap-with-select hsc))
 
     [:table_primary [:collection_derived_table _ _] _]
     ;;=>

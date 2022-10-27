@@ -1,0 +1,50 @@
+hash-threshold 8
+
+statement ok
+INSERT INTO tab0 (id, col0, col1) VALUES(1,97,1)
+
+statement ok
+INSERT INTO tab0 (id, col0, col1) VALUES(2,15,81)
+
+statement ok
+INSERT INTO tab0 (id, col0, col1) VALUES(3,87,21)
+
+
+query I rowsort
+SELECT tab0.col0 FROM tab0 GROUP BY tab0.col0 HAVING MIN ( CASE WHEN 3 IN ( 3 ) THEN 2 ELSE 1 END) = 2
+----
+15
+87
+97
+
+query I rowsort
+SELECT MIN ( CASE WHEN 3 IN ( 3 ) THEN 2 ELSE 1 END) FROM tab0
+----
+2
+
+query I rowsort
+SELECT MIN ( CASE WHEN 3 IN ( 3 ) THEN 2 ELSE 1 END) FROM tab0 GROUP BY tab0.col0 HAVING MIN ( CASE WHEN 3 IN ( 3 ) THEN 2 ELSE 1 END) = 2
+----
+2
+2
+2
+
+
+query I rowsort
+SELECT SUM ( tab0.col0 ) FROM tab0 GROUP BY tab0.col0 HAVING AVG ( tab0.col0 ) > 30
+----
+87
+97
+
+query I rowsort
+SELECT SUM ( tab0.col1 ) FROM tab0 GROUP BY tab0.col0 HAVING AVG ( tab0.col0 ) > 30
+----
+1
+21
+
+query I rowsort
+SELECT tab0.col1 FROM tab0
+----
+1
+21
+81
