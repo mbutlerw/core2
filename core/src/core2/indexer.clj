@@ -773,7 +773,8 @@
                        3 (.indexOp sql-idxer tx-op-idx)))
                    nil
                    (catch core2.RuntimeException e e)
-                   (catch core2.IllegalArgumentException e e))]
+                   (catch core2.IllegalArgumentException e e)
+                   (catch core2.UnsupportedOperationException e e))]
         (do
           (log/debug e "aborted tx")
           (.abort temporal-idxer)

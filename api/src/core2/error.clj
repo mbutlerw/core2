@@ -48,3 +48,27 @@
 
 (defn -runtime-err-reader [data]
   (runtime-err (::error-key data) data))
+
+(defn unsupported-op
+  ([k] (unsupported-op k {}))
+
+  ([k data]
+   (unsupported-op  k data nil))
+
+  ([k {::keys [^String message] :as data} cause]
+   (let [message (or message (format "Unsupported operation: '%s'" k))]
+     (core2.UnsupportedOperationException. message
+                                      (merge {::error-type :unsupported-operation
+                                              ::error-key k
+                                              ::message message}
+                                             data)
+                                      cause))))
+
+(defmethod print-dup core2.UnsupportedOperationException [e, ^Writer w]
+  (.write w (str "#c2/unsupported-op " (ex-data e))))
+
+(defmethod print-method core2.UnsupportedOperationException [e, ^Writer w]
+  (print-dup e w))
+
+(defn -uoe-reader [data]
+  (unsupported-op (::error-key data) data))

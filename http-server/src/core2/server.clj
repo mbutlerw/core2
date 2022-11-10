@@ -174,6 +174,7 @@
                                        (-> (merge ri.exception/default-handlers
                                                   {core2.IllegalArgumentException handle-ex-info
                                                    core2.RuntimeException handle-ex-info
+                                                   core2.UnsupportedOperationException handle-ex-info
                                                    ::r.coercion/request-coercion handle-request-coercion-error
                                                    :muuntaja/decode handle-muuntaja-decode-error
                                                    ::ri.exception/wrap (fn [handler e req]

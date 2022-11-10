@@ -450,6 +450,10 @@
 
           (catch core2.IllegalArgumentException e
             {:statement-type :error
+             :err (err-protocol-violation (.getMessage e))})
+
+          (catch core2.UnsupportedOperationException e
+            {:statement-type :error
              :err (err-protocol-violation (.getMessage e))})))))
 
 (defn- json-clj

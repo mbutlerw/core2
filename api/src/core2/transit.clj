@@ -41,6 +41,7 @@
          {TransactionInstant (transit/write-handler "core2/tx-key" #(select-keys % [:tx-id :sys-time]))
           core2.IllegalArgumentException (transit/write-handler "core2/illegal-arg" ex-data)
           core2.RuntimeException (transit/write-handler "core2/runtime-err" ex-data)
+          core2.UnsupportedOperationException (transit/write-handler "core2/unsupported-op" ex-data)
 
           IntervalYearMonth (transit/write-handler "core2.interval/year-month" #(str (.-period ^IntervalYearMonth %)))
 
