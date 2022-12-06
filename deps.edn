@@ -88,7 +88,7 @@
                        "test/core2/sql/logic_test/sqlite_test/select2.test"
                        "test/core2/sql/logic_test/sqlite_test/select3.test"
                        "test/core2/sql/logic_test/sqlite_test/select4.test"
-                       #_"test/core2/sql/logic_test/sqlite_test/select5.test"
+                       "test/core2/sql/logic_test/sqlite_test/select5.test"
                        "test/core2/sql/logic_test/sqlite_test/random/expr/slt_good_0.test"
                        "test/core2/sql/logic_test/sqlite_test/random/aggregates/slt_good_0.test"
                        "test/core2/sql/logic_test/sqlite_test/random/groupby/slt_good_0.test"
