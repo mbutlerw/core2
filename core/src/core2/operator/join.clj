@@ -614,7 +614,7 @@
     (let [equi-join-cond (last condition)
           lhs (first (keys equi-join-cond))
           rhs (first (vals equi-join-cond))
-          lhs-cols (expr-symbols lhs)]
+          lhs-cols (if (symbol? lhs) #{lhs} (expr-symbols lhs))]
       (if (= (:cols-from-current-rel join-condition) lhs-cols)
         condition
         [:equi-condition {rhs lhs}])) condition))
@@ -696,10 +696,18 @@
        :sub-graph-unused-rels rels
        :sub-graph-unused-conditions conditions})))
 
+(defn condition->cols [condition]
+  (if-let [cols (and (= :equi-condition (first condition))
+                     (let [[k v] (first (last condition))]
+                       (when (and (symbol? k) (symbol? v))
+                         #{k v})))]
+    cols
+    (-> condition last expr-symbols)))
+
 (defmethod lp/emit-expr :mega-join [{:keys [conditions relations]} args]
   (let [conditions-with-cols (->> conditions
                                   (map (fn [condition]
-                                         {:cols (-> condition last expr-symbols)
+                                         {:cols (condition->cols condition)
                                           :condition condition}))
                                   (map-indexed #(assoc %2 :condition-id %1)))
         child-relations (->> relations
