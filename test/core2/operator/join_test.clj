@@ -2,6 +2,8 @@
   (:require [clojure.test :as t]
             [core2.test-util :as tu]))
 
+(t/use-fixtures :each tu/with-allocator)
+
 (t/deftest test-cross-join
   (t/is (= {:res [{{:a 12, :b 10, :c 1} 2,
                    {:a 12, :b 15, :c 2} 2,
@@ -813,9 +815,17 @@
                    {x1 x3}]
                   [[::tu/blocks [[{:x1 1}]]]
                    [::tu/blocks [[{:x2 1}]]]
-                   [::tu/blocks [[{:x3 1 :x4 3}]]]]]]))))
+                   [::tu/blocks [[{:x3 1 :x4 3}]]]]]])))
 
-  (t/is (thrown-with-msg? RuntimeException
+    (t/is (= [{:baz 10, :bar 1}]
+             (tu/query-ra
+               '[:mega-join
+                 [{bar (- ?foo 0)}]
+                 [[:table [{:bar 1}]]
+                  [:table [{:baz 10}]]]]
+               {:params {'?foo 1}}))))
+
+(t/is (thrown-with-msg? RuntimeException
                           #"Unused Join Conditions Remain"
                           (tu/query-ra
                             '[:mega-join
