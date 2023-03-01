@@ -16,6 +16,7 @@
 #_{:clj-kondo/ignore [:unused-binding :clojure-lsp/unused-public-var]}
 (definterface IInternalIdManager
   (^long getOrCreateInternalId [^String table, ^Object id, ^long row-id])
+  (^long getInternalId [^String table, ^Object id])
   (^boolean isKnownId [^String table, ^Object id]))
 
 (defn- normalize-id [id]
@@ -37,6 +38,9 @@
                         (apply [_ _]
                           ;; big endian for index distribution
                           (Long/reverseBytes row-id)))))
+
+  (getInternalId [_ table id]
+    (.get id->internal-id [table (normalize-id id)]))
 
   (isKnownId [_ table id]
     (.containsKey id->internal-id [table (normalize-id id)]))

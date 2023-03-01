@@ -982,3 +982,49 @@
                                                              [(+ a 1) b])]}
                                        (assoc :basis {:tx !tx}))))
               "b is unified")))))
+
+(deftest test-current-row-ids
+  (let [tx (-> (c2/submit-tx
+                 tu/*node*
+                 [[:put {:id :ivan, :first-name "Ivan", :last-name "Ivanov"}]
+                  [:put {:id :ivan, :first-name "Fivan", :foo "bar"}]
+                  [:put {:id :petr, :first-name "Petr", :last-name "Petrov"}
+                   {:app-time-start #inst "3000" :app-time-end #inst "3001"}]
+                  [:put {:id :petr, :first-name "Petr", :last-name "Petrov"}
+                   {:app-time-start #inst "3002" :app-time-end #inst "3003"}]
+                  [:put {:id :jeff, :first-name "jeff"}
+                   {:app-time-start #inst "1001" :app-time-end #inst "1005"}]
+                  [:put {:id :dave :first-name "dave"}]
+                  [:put {:id :rob :first-name "rob"}]])
+               (tu/then-await-tx tu/*node*))
+
+        tx2 (-> (c2/submit-tx
+                  tu/*node*
+                  [[:put {:id :petr, :first-name "Petr", :last-name "Petrov"} {:app-time-start #inst "2999"}]
+                   [:put {:id :dave :first-name "dave" } {:app-time-start #inst "4000"}]
+                   [:put {:id :ivan, :first-name "Bivan", :foo "baz"}]
+                   [:delete :rob]])
+                (tu/then-await-tx tu/*node*))
+        tx3 (-> (c2/submit-tx tu/*node* [[:put {:id :petr, :first-name "Petr", :last-nae "peepy"}]])
+                (tu/then-await-tx tu/*node*))]
+
+    (t/is (= (sort-by
+               :name
+               [{:name "Bivan"}
+                {:name "Petr"}
+                {:name "dave"}])
+             (sort-by
+               :name
+               (->> (c2/plan-datalog tu/*node*
+                                         (-> '{:find [name]
+                                               :where [[e :first-name name]]}
+                                             (assoc :basis {:tx tx3})))
+                        (into [])))))
+
+    (t/is (= [{:e :ivan}]
+             (->> (c2/plan-datalog tu/*node*
+                                   (-> '{:find [e]
+                                         :where [[e :id :ivan]]}
+                                       (assoc :basis {:tx tx3})))
+                  (into [])))
+          "returning eid")))

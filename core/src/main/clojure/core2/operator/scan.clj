@@ -13,6 +13,7 @@
             [core2.temporal :as temporal]
             [core2.types :as t]
             [core2.util :as util]
+            [core2.vector :as vec]
             [core2.vector.indirect :as iv]
             core2.watermark)
   (:import clojure.lang.MapEntry
@@ -182,6 +183,7 @@
                :when (not (temporal/temporal-column? col-name))
                :let [^IRelationSelector col-pred (.get col-preds col-name)
                      ^IIndirectRelation in-rel (.get in-rels (name col-name))]]
+
            (align/->row-id-bitmap (when col-pred
                                     (.select col-pred allocator in-rel params))
                                   (.vectorForName in-rel "_row-id")))
@@ -205,7 +207,7 @@
           (aset temporal/row-id-idx
                 (min max-row-id (aget temporal-max-range temporal/row-id-idx))))))))
 
-(defn- ->temporal-rel ^core2.vector.IIndirectRelation [^IWatermark watermark, ^BufferAllocator allocator, ^List col-names ^longs temporal-min-range ^longs temporal-max-range atemporal-row-id-bitmap]
+(defn- ->temporal-rel ^core2.vector.IIndirectRelation [^IWatermark watermark, ^BufferAllocator allocator, ^List col-names ^longs temporal-min-range ^longs temporal-max-range atemporal-row-id-bitmap row-id->eid table]
   (let [temporal-min-range (adjust-temporal-min-range-to-row-id-range temporal-min-range atemporal-row-id-bitmap)
         temporal-max-range (adjust-temporal-max-range-to-row-id-range temporal-max-range atemporal-row-id-bitmap)]
     (.createTemporalRelation (.temporalRootsSource watermark)
@@ -214,7 +216,38 @@
                                   (into [] (comp (distinct) (filter temporal/temporal-column?))))
                              temporal-min-range
                              temporal-max-range
-                             atemporal-row-id-bitmap)))
+                             atemporal-row-id-bitmap
+                             row-id->eid
+                             table)))
+
+#_(defn- ->atemporal-rel ^core2.vector.IIndirectRelation  [^BufferAllocator allocator, atemporal-row-id-bitmap]
+  (let [row-id-col-type (t/col-type->field "_row-id" (get temporal/temporal-col-types "_row-id"))
+        row-id-vec ^BigIntVector (.createVector row-id-col-type allocator)
+        row-id-vec-wtr (vec/->mono-writer row-id-vec row-id-col-type)
+        row-id-count (.getCardinality atemporal-row-id-bitmap)]
+    (.allocateNew row-id-vec row-id-count)
+    (.forEach atemporal-row-id-bitmap
+              (reify IntConsumer
+                (accept [_ row-id]
+                  (.add read-cols (align-vector content-rel row-id->repeat-count)))))
+
+
+    (clojure.pprint/pprint row-id-col-type)
+    (clojure.pprint/pprint row-id-vec))
+  )
+
+(defn row-id->eid ^java.util.Map
+  [^IIndirectRelation content-rel, ^org.roaringbitmap.longlong.Roaring64Bitmap atemporal-row-id-bitmap]
+  (let [row-id->eid (HashMap.)
+        [^IIndirectVector row-id-col, ^IIndirectVector eid-col] (vec content-rel)
+        eid-vec (.getVector eid-col) ;; TODO How do read a Idr-vec properly slice vec included 
+        row-id-rdr (.monoReader row-id-col :i64)]
+
+    (dotimes [idx (.getValueCount row-id-col)]
+      (let [row-id (.readLong row-id-rdr idx)]
+        (when (.contains atemporal-row-id-bitmap row-id)
+          (.put row-id->eid row-id (t/get-object eid-vec idx)))))
+    row-id->eid))
 
 (defn- apply-temporal-preds ^core2.vector.IIndirectRelation [^IIndirectRelation temporal-rel, ^BufferAllocator allocator, ^Map col-preds, params]
   (->> (for [^IIndirectVector col temporal-rel
@@ -239,12 +272,13 @@
                      ^longs temporal-min-range
                      ^longs temporal-max-range
                      ^ICursor #_#_<Map<String, IIR>> blocks
+                     table
                      params]
   ICursor
   (tryAdvance [_ c]
     (let [keep-row-id-col? (contains? (set temporal-col-names) "_row-id")
           keep-id-col? (contains? (set content-col-names) "id")
-          content-col-names (or (not-empty content-col-names) #{"id"})
+          content-col-names (conj (set content-col-names) "id")
           !advanced? (volatile! false)]
 
       (while (and (not @!advanced?)
@@ -253,7 +287,8 @@
                                  (accept [_ in-roots]
                                    (let [^Map in-roots in-roots
                                          atemporal-row-id-bitmap (->atemporal-row-id-bitmap allocator content-col-names col-preds in-roots params)
-                                         temporal-rel (->temporal-rel watermark allocator temporal-col-names temporal-min-range temporal-max-range atemporal-row-id-bitmap)]
+                                         row-id->eid (row-id->eid (get in-roots "id") atemporal-row-id-bitmap)
+                                         temporal-rel (->temporal-rel watermark allocator temporal-col-names temporal-min-range temporal-max-range atemporal-row-id-bitmap row-id->eid (name table))]
                                      (try
                                        (let [temporal-rel (-> temporal-rel (apply-temporal-preds allocator col-preds params))
                                              read-rel (cond-> (align/align-vectors (.values in-roots) temporal-rel)
@@ -341,12 +376,15 @@
                                         content-col-names temporal-col-names col-preds
                                         temporal-min-range temporal-max-range
                                         (util/->concat-cursor (->content-chunks metadata-mgr buffer-pool
-                                                                                (name table) content-col-names
+                                                                                (name table) #_content-col-names
+                                                                                (conj (set content-col-names) "id")
                                                                                 metadata-pred)
                                                               (some-> (.liveChunk watermark)
                                                                       (.liveTable (name table))
-                                                                      (.liveBlocks (or (not-empty content-col-names) #{"id"})
+                                                                      (.liveBlocks #_(or (not-empty content-col-names) #{"id"})
+                                                                                   (conj (set content-col-names) "id")
                                                                                    metadata-pred)))
+                                        table
                                         params)
                            (coalesce/->coalescing-cursor allocator)
                            (util/and-also-close watermark)))

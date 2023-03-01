@@ -58,3 +58,21 @@
         (.add read-cols (align-vector content-rel row-id->repeat-count))))
 
     (iv/->indirect-rel read-cols)))
+
+(defn align-atemporal-vectors ^core2.vector.IIndirectRelation
+  [^List content-rels, ^org.roaringbitmap.longlong.Roaring64Bitmap atemporal-row-id-bitmap]
+  (let [read-cols (LinkedList.)]
+    (doseq [^IIndirectRelation content-rel content-rels]
+
+      (let [[^IIndirectVector row-id-col, ^IIndirectVector content-col] (vec content-rel)
+            row-id-rdr (.monoReader row-id-col :i64)
+            res (IntStream/builder)]
+
+        (dotimes [idx (.getValueCount row-id-col)]
+          (let [row-id (.readLong row-id-rdr idx)]
+            (when (.contains atemporal-row-id-bitmap row-id)
+              (.add res idx))))
+
+        (.add read-cols (.select content-col (.toArray (.build res))))))
+
+    (iv/->indirect-rel read-cols)))
