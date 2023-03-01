@@ -308,7 +308,7 @@
                       (.addLong future-unsafe-row-ids row-id)
                       (when (.contains current-row-ids row-id)
                         (.addLong valid-row-ids row-id)))))))
-    (if false #_(.isEmpty future-unsafe-row-ids)
+    (if (.isEmpty future-unsafe-row-ids)
       (let [cols (ArrayList. 1)
             value-count (.getLongCardinality valid-row-ids)]
         (try
