@@ -4,6 +4,7 @@
             [core2.buffer-pool :as bp]
             [core2.datalog :as d]
             [core2.error :as err]
+            [core2.expression :as expr]
             core2.indexer.internal-id-manager
             core2.indexer.log-indexer
             core2.live-chunk
@@ -613,7 +614,7 @@
                       (let [shared-wm (.wrapWatermark wm-mgr
                                                       (wm/->Watermark tx-key
                                                                       (.openWatermark live-chunk)
-                                                                      (.getTemporalWatermark temporal-mgr)
+                                                                      (.getTemporalWatermark temporal-mgr (.instant expr/*clock*))
                                                                       true))]
                         (set! (.shared-wm this) shared-wm)
 

@@ -87,7 +87,7 @@
        (map-indexed test-ra-query results-sf-001)))))
 
 (comment
-  (binding [*qs* #{11 17}]
+  (binding [*qs* #{8}]
     (t/run-test test-001-ra)))
 
 (t/deftest ^:integration test-01-ra

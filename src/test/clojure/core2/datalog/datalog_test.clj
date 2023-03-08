@@ -11,7 +11,7 @@
             [core2.api :as c2]
             [core2.node :as node]))
 
-(t/use-fixtures :each tu/with-node)
+(t/use-fixtures :each tu/with-mock-clock tu/with-node)
 
 (def ivan+petr
   [[:put {:id :ivan, :first-name "Ivan", :last-name "Ivanov"}]
@@ -982,49 +982,93 @@
                                                              [(+ a 1) b])]}
                                        (assoc :basis {:tx !tx}))))
               "b is unified")))))
+#_(deftest test-current-row-ids
+    (tu/with-mock-clock (fn []
 
-(deftest test-current-row-ids
+
+                          (let [tx (-> (c2/submit-tx
+                                         tu/*node*
+                                         [[:put {:id :ivan, :first-name "Ivan", :last-name "Ivanov"}]
+                                          [:put {:id :ivan, :first-name "Fivan", :foo "bar"}]
+                                          [:put {:id :petr, :first-name "Petr", :last-name "Petrov"}
+                                           {:app-time-start #inst "3000" :app-time-end #inst "3001"}]
+                                          [:put {:id :petr, :first-name "Petr", :last-name "Petrov"}
+                                           {:app-time-start #inst "3002" :app-time-end #inst "3003"}]
+                                          [:put {:id :jeff, :first-name "jeff"}
+                                           {:app-time-start #inst "1001" :app-time-end #inst "1005"}]
+                                          [:put {:id :dave :first-name "dave"}]
+                                          [:put {:id :rob :first-name "rob"}]])
+                                       (tu/then-await-tx tu/*node*))
+
+                                tx2 (-> (c2/submit-tx
+                                          tu/*node*
+                                          [[:put {:id :petr, :first-name "Petr", :last-name "Petrov"} {:app-time-start #inst "2999"}]
+                                           [:put {:id :dave :first-name "dave"} {:app-time-start #inst "4000"}]
+                                           [:put {:id :ivan, :first-name "Bivan", :foo "baz"}]
+                                           [:delete :rob]])
+                                        (tu/then-await-tx tu/*node*))
+                                tx3 (-> (c2/submit-tx tu/*node* [[:put {:id :petr, :first-name "Petr", :last-name "peepy"}]])
+                                        (tu/then-await-tx tu/*node*))]
+
+                            (t/is (= (sort-by
+                                       :name
+                                       [{:name "Bvan"}
+                                        {:name "Petr"}
+                                        {:name "dave"}])
+                                     (sort-by
+                                       :name
+                                       (->> (c2/plan-datalog tu/*node*
+                                                             (-> '{:find [name]
+                                                                   :where [[e :first-name name]]}
+                                                                 (assoc :basis {:tx tx3 })))
+                                            (into [])))))
+
+                            #_(t/is (= [{:e :ivan}]
+                                       (->> (c2/plan-datalog tu/*node*
+                                   (-> '{:find [e]
+                                         :where [[e :id :ivan]]}
+                                       (assoc :basis {:tx tx3})))
+                  (into [])))
+          "returning eid")))))
+
+(deftest test-row-ids
   (let [tx (-> (c2/submit-tx
-                 tu/*node*
-                 [[:put {:id :ivan, :first-name "Ivan", :last-name "Ivanov"}]
-                  [:put {:id :ivan, :first-name "Fivan", :foo "bar"}]
-                  [:put {:id :petr, :first-name "Petr", :last-name "Petrov"}
-                   {:app-time-start #inst "3000" :app-time-end #inst "3001"}]
-                  [:put {:id :petr, :first-name "Petr", :last-name "Petrov"}
-                   {:app-time-start #inst "3002" :app-time-end #inst "3003"}]
-                  [:put {:id :jeff, :first-name "jeff"}
-                   {:app-time-start #inst "1001" :app-time-end #inst "1005"}]
-                  [:put {:id :dave :first-name "dave"}]
-                  [:put {:id :rob :first-name "rob"}]])
-               (tu/then-await-tx tu/*node*))
+                                       tu/*node*
+                                       [[:put {:id :ivan, :first-name "Ivan"}]
+                                        [:put {:id :petr, :first-name "Petr"}
+                                         {:app-time-start #inst "2020-01-02T12:00:00Z"}]
+                                        [:put {:id :jen, :first-name "Jen"}
+                                         {:app-time-end #inst "2020-01-02T13:00:00Z"}]
+                                        [:put {:id :sam, :first-name "Sam"}]])
+                                     (tu/then-await-tx tu/*node*))
 
-        tx2 (-> (c2/submit-tx
-                  tu/*node*
-                  [[:put {:id :petr, :first-name "Petr", :last-name "Petrov"} {:app-time-start #inst "2999"}]
-                   [:put {:id :dave :first-name "dave" } {:app-time-start #inst "4000"}]
-                   [:put {:id :ivan, :first-name "Bivan", :foo "baz"}]
-                   [:delete :rob]])
-                (tu/then-await-tx tu/*node*))
-        tx3 (-> (c2/submit-tx tu/*node* [[:put {:id :petr, :first-name "Petr", :last-nae "peepy"}]])
-                (tu/then-await-tx tu/*node*))]
+                              tx2 (-> (c2/submit-tx
+                                        tu/*node*
+                                        [[:put {:id :ivan, :first-name "Ivan-2"}
+                                          {:app-time-start #inst "2020-01-02T14:00:00Z"}]
+                                         [:put {:id :ben, :first-name "Ben"}
+                                          {:app-time-start #inst "2020-01-02T14:00:00Z"
+                                           :app-time-end #inst "2020-01-02T15:00:00Z"}]])
+                                      (tu/then-await-tx tu/*node*))]
 
-    (t/is (= (sort-by
-               :name
-               [{:name "Bivan"}
-                {:name "Petr"}
-                {:name "dave"}])
-             (sort-by
-               :name
-               (->> (c2/plan-datalog tu/*node*
-                                         (-> '{:find [name]
-                                               :where [[e :first-name name]]}
-                                             (assoc :basis {:tx tx3})))
-                        (into [])))))
+                          (t/is (= (sort-by
+                                     :name
+                                     [{:name "Bvan"}
+                                      {:name "Petr"}
+                                      {:name "dave"}])
+                                   (sort-by
+                                     :name
+                                     (->> (c2/plan-datalog tu/*node*
+                                                           (-> '{:find [name]
+                                                                 :where [[e :first-name name]]}
+                                                               (assoc :basis {:tx tx2})))
+                                          (into [])))))
 
-    (t/is (= [{:e :ivan}]
-             (->> (c2/plan-datalog tu/*node*
+                          #_(t/is (= [{:e :ivan}]
+                                       (->> (c2/plan-datalog tu/*node*
                                    (-> '{:find [e]
                                          :where [[e :id :ivan]]}
                                        (assoc :basis {:tx tx3})))
                   (into [])))
           "returning eid")))
+

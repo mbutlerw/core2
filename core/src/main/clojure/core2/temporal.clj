@@ -1,6 +1,7 @@
 (ns core2.temporal
   (:require [clojure.tools.logging :as log]
             core2.buffer-pool
+            [core2.expression :as expr]
             core2.indexer.internal-id-manager
             [core2.metadata :as meta]
             [core2.temporal.grid :as grid]
@@ -16,7 +17,8 @@
            core2.object_store.ObjectStore
            [core2.temporal.kd_tree IKdTreePointAccess MergedKdTree]
            java.io.Closeable
-           [java.util ArrayList Arrays Comparator Map]
+           java.time.Instant
+           [java.util ArrayList Arrays Comparator Map TreeSet]
            [java.util.concurrent CompletableFuture ExecutorService Executors ConcurrentHashMap]
            [java.util.function LongFunction Predicate ToLongFunction BiConsumer]
            java.util.stream.LongStream
@@ -112,7 +114,7 @@
 
 #_{:clj-kondo/ignore [:unused-binding :clojure-lsp/unused-public-var]}
 (definterface ITemporalManager
-  (^core2.temporal.ITemporalRelationSource getTemporalWatermark [])
+  (^core2.temporal.ITemporalRelationSource getTemporalWatermark [^java.time.Instant current-time])
   (^core2.vector.IIndirectRelation createTemporalRelation [^org.apache.arrow.memory.BufferAllocator allocator
                                                            ^java.util.List columns
                                                            ^longs temporalMinRange
@@ -252,19 +254,13 @@
 ;; if and when we find out a way to clear entities from the future updates set, maybe this becomes a problem.
 
     (when (and
-            (not (.contains current-tx-entities-with-future-updates iid))
             (not future-update?)
             (<= app-time-start-μs sys-time-μs)
             (> app-time-end-μs sys-time-μs))
       (doseq [o-coord overlap]
-        (.removeLong current-tx-current-row-ids (aget o-coord row-id-idx))
-        (.addLong current-tx-row-ids-to-be-removed (aget o-coord row-id-idx)))
+        (.removeLong current-tx-current-row-ids (aget o-coord row-id-idx)))
       (when-not (.tombstone coordinates)
-        (.addLong current-tx-current-row-ids row-id)
-        (.addLong current-tx-row-ids-to-be-added row-id)))
-
-    (when future-update? ;; not needed if iid in current-tx-entities-with-future-updates
-      (.addLong current-tx-entities-with-future-updates iid))
+        (.addLong current-tx-current-row-ids row-id)))
 
     (reduce
       (fn [kd-tree ^longs coord]
@@ -281,6 +277,58 @@
                                          (aset app-time-start-idx app-time-end-μs)))))
       kd-tree
       overlap)))
+
+(defn additions-since-cache [kd-tree from-tx-key current-time]
+  (let [latest-completed-tx-sys-time (util/instant->micros (.sys-time from-tx-key))
+        sys-time-μs (util/instant->micros current-time)
+
+        min-range (doto (->min-range)
+                    (aset app-time-start-idx (inc latest-completed-tx-sys-time))
+                    (aset app-time-end-idx (inc latest-completed-tx-sys-time)) ;; can't use current-time as that would remove changes that became avilable then stopped in this timeframe, which are needed so that this watermark/queue can be reused for other current-times. 
+                    (aset sys-time-end-idx latest-completed-tx-sys-time)) ;; could be either lastest-tx or current-time as you can't tx-end into the future.
+
+        max-range (doto (->max-range)
+                    (aset app-time-start-idx sys-time-μs))
+
+        ^IKdTreePointAccess point-access (kd/kd-tree-point-access kd-tree)
+
+        overlap (-> ^LongStream (kd/kd-tree-range-search
+                                  kd-tree
+                                  min-range
+                                  max-range)
+                    (.mapToObj (reify LongFunction
+                                 (apply [_ x]
+                                   (.getArrayPoint point-access x))))
+                    (.toArray))]
+
+
+    overlap))
+
+(defn removals-since-cache [kd-tree from-tx-key current-time]
+  (let [latest-completed-tx-sys-time (util/instant->micros (.sys-time from-tx-key))
+        sys-time-μs (util/instant->micros current-time)
+
+        min-range (doto (->min-range)
+                    (aset app-time-end-idx (inc latest-completed-tx-sys-time)) 
+                    (aset sys-time-end-idx latest-completed-tx-sys-time))
+
+        max-range (doto (->max-range)
+                    (aset app-time-start-idx sys-time-μs)
+                    (aset app-time-end-idx sys-time-μs))
+
+        ^IKdTreePointAccess point-access (kd/kd-tree-point-access kd-tree)
+
+        overlap (-> ^LongStream (kd/kd-tree-range-search
+                                  kd-tree
+                                  min-range
+                                  max-range)
+                    (.mapToObj (reify LongFunction
+                                 (apply [_ x]
+                                   (.getArrayPoint point-access x))))
+                    (.toArray))]
+
+
+    overlap))
 
 (defn- ->temporal-obj-key [chunk-idx]
   (format "chunk-%s/temporal.arrow" (util/->lex-hex-string chunk-idx)))
@@ -384,6 +432,7 @@
                           ^IInternalIdManager iid-mgr
                           ^:volatile-mutable current-row-ids
                           ^:volatile-mutable entities-with-future-updates
+                          ^:volatile-mutable latest-completed-tx
                           ^:unsynchronized-mutable snapshot-future
                           ^:unsynchronized-mutable kd-tree-snapshot-idx
                           ^:volatile-mutable kd-tree
@@ -462,8 +511,39 @@
           (util/delete-file path)))))
 
   ITemporalManager
-  (getTemporalWatermark [this-tm]
-    (let [kd-tree (some-> kd-tree (kd/kd-tree-retain allocator))]
+  (getTemporalWatermark [this-tm current-time]
+    (let [kd-tree (some-> kd-tree (kd/kd-tree-retain allocator))
+          additions (->> (additions-since-cache kd-tree (.latest-completed-tx this-tm) current-time)
+                         (map #(doto (long-array 3)
+                                 (aset 0 (aget % app-time-start-idx))
+                                 (aset 1 (aget % row-id-idx))
+                                 (aset 2 1))))
+          removals (->> (removals-since-cache kd-tree (.latest-completed-tx this-tm) current-time)
+                        (map #(doto (long-array 3)
+                                (aset 0 (aget % app-time-end-idx))
+                                (aset 1 (aget % row-id-idx))
+                                (aset 2 0))))
+          changes (TreeSet. #_(comparator (fn [x y]
+                                         (< (aget x 0)
+                                            (aget y 0)))))]
+      (doseq [change (concat additions removals)]
+        (.add changes change))
+      (println "add")
+      (clojure.pprint/pprint additions)
+      (println "del")
+      (clojure.pprint/pprint  removals)
+      (println "chngs")
+      (clojure.pprint/pprint (concat additions removals))
+      (clojure.pprint/pprint changes)
+      (clojure.pprint/pprint (iterator-seq (.iterator changes)))
+      (clojure.pprint/pprint (-> changes
+                                 (.headSet
+                                   (doto (long-array k)
+                                     (aset 0 (util/instant->micros current-time)))
+                                   true)
+                                 (.iterator)
+                                 (iterator-seq)))
+      (clojure.pprint/pprint (iterator-seq (.iterator changes)))
       (reify
         ITemporalRelationSource
         (createTemporalRelation [_ allocator columns temporal-min-range temporal-max-range row-id-bitmap row-id->eid table]
@@ -541,6 +621,7 @@
         (commit [_]
           (set! (.entities-with-future-updates this-tm) current-tx-entities-with-future-updates)
           (set! (.current-row-ids this-tm) current-tx-current-row-ids)
+          (set! (.latest-completed-tx this-tm) tx-key)
           (set! (.kd-tree this-tm) @!kd-tree)
           evicted-row-ids)
 
@@ -577,7 +658,7 @@
 
   (let [pool (Executors/newSingleThreadExecutor (util/->prefix-thread-factory "temporal-snapshot-"))]
     (doto (TemporalManager. allocator object-store buffer-pool metadata-mgr
-                            pool internal-id-mgr (Roaring64Bitmap.) (Roaring64Bitmap.) nil nil nil async-snapshot?)
+                            pool internal-id-mgr (Roaring64Bitmap.) (Roaring64Bitmap.) nil nil nil nil async-snapshot?)
       (.populateKnownChunks))))
 
 (defmethod ig/halt-key! ::temporal-manager [_ ^TemporalManager mgr]

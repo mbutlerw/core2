@@ -90,7 +90,9 @@
 
   (^core2.InstantSource [^Iterable insts] (InstantSource/mock insts)))
 
-(defn with-mock-clock [f]
+(defn with-mock-clock
+  "Run before 'with-node' fixture if being used together"
+  [f]
   (with-opts {:core2.log/memory-log {:instant-src (->mock-clock)}} f))
 
 (defn await-temporal-snapshot-build [^Node node]
