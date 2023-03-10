@@ -1206,3 +1206,41 @@
                             [(> sys-start2 sys-start)]
                             [(< sys-start2 sys-end)]]}, !tx7, nil, 7797))
             "Case 8: Application-time sequenced and system-time nonsequenced"))))
+
+(deftest test-current-row-ids
+  (c2/submit-tx
+    tu/*node*
+    [[:put {:id :ivan, :first-name "Ivan"}]
+     [:put {:id :petr, :first-name "Petr"}
+      {:app-time-start #inst "2020-01-02T12:00:00Z"}]
+     [:put {:id :susie, :first-name "Susie"}
+      {:app-time-end #inst "2020-01-02T13:00:00Z"}]
+     [:put {:id :sam, :first-name "Sam"}]
+     [:put {:id :petr, :first-name "Petr"}
+      {:app-time-start #inst "2020-01-04T12:00:00Z"}]
+     [:put {:id :jen, :first-name "Jen"}
+      {:app-time-end #inst "2020-01-04T13:00:00Z"}]
+     [:put {:id :james, :first-name "James"}
+      {:app-time-start #inst "2020-01-01T12:00:00Z"}]
+     [:put {:id :jon, :first-name "Jon"}
+      {:app-time-end #inst "2020-01-01T12:00:00Z"}]])
+
+  (c2/submit-tx
+    tu/*node*
+    [[:put {:id :ivan, :first-name "Ivan-2"}
+      {:app-time-start #inst "2020-01-02T14:00:00Z"}] ;a
+     [:put {:id :ben, :first-name "Ben"}
+      {:app-time-start #inst "2020-01-02T14:00:00Z"
+       :app-time-end #inst "2020-01-02T15:00:00Z"}]]) ;both or i
+
+  (t/is (= [{:name "Ivan-2"}
+            {:name "James"}
+            {:name "Jen"}
+            {:name "Petr"}
+            {:name "Sam"}]
+           (c2/q
+             tu/*node*
+             (-> '{:find [name]
+                   :where [[e :first-name name]]
+                   :order-by [[name :asc]]}
+                 (assoc :basis {:current-time #time/instant "2020-01-03T00:00:00Z"})))))) ;; timing

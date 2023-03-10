@@ -12,6 +12,7 @@
             [core2.temporal :as temporal]
             [core2.types :as t]
             [core2.util :as util]
+            [core2.vector :as vec]
             [core2.vector.indirect :as iv]
             core2.watermark
             [juxt.clojars-mirrors.integrant.core :as ig])
@@ -23,13 +24,13 @@
            core2.operator.IRelationSelector
            (core2.vector IIndirectRelation IIndirectVector)
            core2.watermark.IWatermark
-           [java.util LinkedList List Map Queue]
+           [java.util LinkedList List Map Queue ArrayList]
            [java.util.function Consumer]
            org.apache.arrow.memory.BufferAllocator
            [org.apache.arrow.vector BigIntVector VarBinaryVector]
            [org.roaringbitmap IntConsumer RoaringBitmap]
            org.roaringbitmap.buffer.MutableRoaringBitmap
-           org.roaringbitmap.longlong.Roaring64Bitmap))
+           (org.roaringbitmap.longlong LongConsumer Roaring64Bitmap)))
 
 ;; TODO be good to just specify a single expression here and have the interpreter split it
 ;; into metadata + col-preds - the former can accept more than just `(and ~@col-preds)
@@ -180,6 +181,31 @@
                              temporal-max-range
                              atemporal-row-id-bitmap)))
 
+(defn- ->atemporal-rel ^core2.vector.IIndirectRelation  [^BufferAllocator allocator, ^Roaring64Bitmap atemporal-row-id-bitmap current-row-ids]
+  (let [cols (ArrayList. 1)
+        row-count (long-array [0])]
+    (try
+
+      (let [col-name "_row-id"
+            col-type (t/col-type->field col-name (get temporal/temporal-col-types col-name))
+            ^BigIntVector row-id-vec (.createVector col-type allocator)
+            row-id-vec-wtr (vec/->mono-writer row-id-vec col-type)]
+        (.forEach atemporal-row-id-bitmap
+                  (reify LongConsumer
+                    (accept [_ row-id]
+                      (when (contains? current-row-ids row-id)
+                        (aset row-count 0 (inc (aget row-count 0)))
+                        (.writeLong row-id-vec-wtr row-id)))))
+
+        (.setValueCount row-id-vec (aget row-count 0))
+        (.add cols (iv/->direct-vec row-id-vec)))
+
+      (iv/->indirect-rel cols (aget row-count 0))
+
+      (catch Throwable e
+        (run! util/try-close cols)
+        (throw e)))))
+
 (defn- apply-temporal-preds ^core2.vector.IIndirectRelation [^IIndirectRelation temporal-rel, ^BufferAllocator allocator, ^Map col-preds, params]
   (->> (for [^IIndirectVector col temporal-rel
              :let [col-pred (get col-preds (.getName col))]
@@ -202,6 +228,7 @@
                      ^Map col-preds
                      ^longs temporal-min-range
                      ^longs temporal-max-range
+                     ^clojure.lang.PersistentHashSet current-row-ids
                      ^ICursor #_#_<Map<String, IIR>> blocks
                      params]
   ICursor
@@ -217,17 +244,18 @@
                                  (accept [_ in-roots]
                                    (let [^Map in-roots in-roots
                                          atemporal-row-id-bitmap (->atemporal-row-id-bitmap allocator content-col-names col-preds in-roots params)
-                                         temporal-rel (->temporal-rel watermark allocator temporal-col-names temporal-min-range temporal-max-range atemporal-row-id-bitmap)]
+                                         atemporal-rel (->atemporal-rel allocator atemporal-row-id-bitmap current-row-ids)
+                                         #_#_temporal-rel (->temporal-rel watermark allocator temporal-col-names temporal-min-range temporal-max-range atemporal-row-id-bitmap)]
                                      (try
-                                       (let [temporal-rel (-> temporal-rel (apply-temporal-preds allocator col-preds params))
-                                             read-rel (cond-> (align/align-vectors (.values in-roots) temporal-rel)
+                                       (let [#_#_temporal-rel (-> temporal-rel (apply-temporal-preds allocator col-preds params))
+                                             read-rel (cond-> (align/align-vectors (.values in-roots) atemporal-rel)
                                                         (not keep-row-id-col?) (remove-col "_row-id")
                                                         (not keep-id-col?) (remove-col "id"))]
                                          (when (and read-rel (pos? (.rowCount read-rel)))
                                            (.accept c read-rel)
                                            (vreset! !advanced? true)))
                                        (finally
-                                         (util/try-close temporal-rel)))))))))
+                                         (util/try-close atemporal-rel)))))))))
       (boolean @!advanced?)))
 
   (close [_]
@@ -311,10 +339,15 @@
                            [temporal-min-range temporal-max-range] (doto (expr.temp/->temporal-min-max-range selects params)
                                                                      (apply-basis-tx! basis col-preds))
                            content-col-names (mapv name content-col-names)
-                           temporal-col-names (mapv name temporal-col-names)]
+                           temporal-col-names (mapv name temporal-col-names)
+                           current-row-ids (.getCurrentRowIds
+                                             ^core2.temporal.ITemporalRelationSource
+                                             (.temporalRootsSource watermark)
+                                             (util/instant->micros (or (:current-time basis)
+                                                                       (:sys-time (:tx basis)))))]
                        (-> (ScanCursor. allocator metadata-mgr watermark
                                         content-col-names temporal-col-names col-preds
-                                        temporal-min-range temporal-max-range
+                                        temporal-min-range temporal-max-range current-row-ids
                                         (util/->concat-cursor (->content-chunks metadata-mgr buffer-pool
                                                                                 (name table) content-col-names
                                                                                 metadata-pred)
