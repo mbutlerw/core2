@@ -254,7 +254,8 @@
                                 [?i :i_status :open]
                                 [?i :i_u_id i_u_id]
                                 [?i :i_initial_price i_initial_price]
-                                [?i :i_current_price i_current_price]]})
+                                [?i :i_current_price i_current_price]]
+                        :basis {:current-time #time/instant "2026-09-06T00:00:00Z"}})
   ;; ra for the above
   (def ra-query
     '[:scan
@@ -276,7 +277,8 @@
 
   (def q  (fn [open-id]
             (tu/query-ra ra-query {:node node
-                                   :params {'?i_id open-id}})))
+                                   :params {'?i_id open-id}
+                                   :basis {:current-time #time/instant "2026-09-06T00:00:00Z"}})))
   ;; ra query
   (time
    (tu/with-allocator
