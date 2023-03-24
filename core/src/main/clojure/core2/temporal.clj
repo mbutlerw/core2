@@ -562,7 +562,7 @@
           !kd-tree (volatile! kd-tree)
           !current-row-ids (volatile! current-row-ids)]
 
-      (when latest-completed-tx
+      #_(when latest-completed-tx
         (vswap!
           !current-row-ids
           advance-current-row-ids
