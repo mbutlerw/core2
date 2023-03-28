@@ -376,26 +376,37 @@
     {scan-col (list* 'and col-preds)}))
 
 (defn- plan-scan [table match temporal-opts]
-  (let [attrs (set (keys match))
+  (let [original_attrs (set (keys match))
 
+        attrs (if (contains? original_attrs 'xt__app-time)
+                (-> original_attrs
+                    (disj 'xt__app-time)
+                    (conj 'application_time_start 'application_time_end))
+                original_attrs)
         attr->lits (-> match
                        (->> (keep (fn [[a [v-type v-arg]]]
                                     (when (= :literal v-type)
                                       {:a a, :lit v-arg})))
                             (group-by :a))
-                       (update-vals #(into #{} (map :lit) %)))]
+                       (update-vals #(into #{} (map :lit) %)))
+        plan (-> [:scan {:table table
+                         :for-app-time (:for-app-time temporal-opts [:at :now])
+                         ;; defaults handled by scan
+                         :for-sys-time (:for-sys-time temporal-opts)}
+                  (-> attrs
+                      (disj '_table)
+                      (->> (mapv (fn [attr]
+                                   (-> attr
+                                       (wrap-scan-col-preds (for [lit (get attr->lits attr)]
+                                                              (list '= attr lit))))))))]
+                 (with-meta {::vars attrs}))]
 
-    (-> [:scan {:table table
-                :for-app-time (:for-app-time temporal-opts [:at :now])
-                ;; defaults handled by scan
-                :for-sys-time (:for-sys-time temporal-opts)}
-         (-> attrs
-             (disj '_table)
-             (->> (mapv (fn [attr]
-                          (-> attr
-                              (wrap-scan-col-preds (for [lit (get attr->lits attr)]
-                                                     (list '= attr lit))))))))]
-        (with-meta {::vars attrs}))))
+    (if (contains? original_attrs 'xt__app-time)
+      (let [[_ [_ lv]] (first (filter #(= 'xt__app-time (first %)) match))]
+        [:map [{(col-sym lv) {:start (col-sym 'application_time_start)
+                              :end (col-sym 'application_time_end)} #_'(period application_time_start application_time_end)}]
+         plan])
+      plan)))
 
 (defn- attr->unwind-col [a]
   (col-sym "__uw" a))
@@ -445,8 +456,9 @@
        (let [match (->> match (mapv (fn [[a v]] (MapEntry/create (col-sym a) v))))
              var->cols (-> match
                            (->> (keep (fn [[a [v-type v-arg]]]
+                                        (prn :a a :v-type v-type :v-arg v-arg)
                                         (case v-type
-                                          :logic-var {:lv v-arg, :col a}
+                                          :logic-var {:lv v-arg :col (if (= a 'xt__app-time) v-arg a)}
                                           :unwind {:lv (first v-arg), :col (attr->unwind-col a)}
                                           nil)))
                                 (group-by :lv))

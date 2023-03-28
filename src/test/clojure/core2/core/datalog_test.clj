@@ -1726,3 +1726,40 @@
                                                 :where [(match customer {:customer customer, :firstname firstname})]})
                                             n-customers]]}
                                  (c2/q tu/*node*))))))
+
+(deftest test-period-predicates
+
+  (c2/submit-tx tu/*node* '[[:put xt_docs {:id 1} {:app-time-start #inst "2015"
+                                                   :app-time-end #inst "2020"}]
+                            [:put xt_cats {:id 2} {:app-time-start #inst "2016"
+                                                   :app-time-end #inst "2018"}]])
+
+  (t/is (= [{:id 1, :id2 2,
+             :xt_docs_app_time {:start #time/zoned-date-time "2015-01-01T00:00Z[UTC]",
+                                :end #time/zoned-date-time "2020-01-01T00:00Z[UTC]"},
+             :xt_cats_app_time {:start #time/zoned-date-time "2016-01-01T00:00Z[UTC]",
+                                :end #time/zoned-date-time "2018-01-01T00:00Z[UTC]"}}]
+           (c2/q
+             tu/*node*
+             '{:find [id id2 xt_docs_app_time xt_cats_app_time]
+               :where [(match xt_docs [id {:xt/app-time xt_docs_app_time}]
+                              {:for-app-time :all-time})
+                       (match xt_cats [{:xt/app-time xt_cats_app_time :id id2}]
+                              {:for-app-time :all-time})
+                       [(contains? xt_docs_app_time xt_cats_app_time)]]}))))
+
+(deftest test-period-constructor
+  (t/is (= [{:p1 {:start #time/zoned-date-time "2018-01-01T00:00Z[UTC]",
+                  :end #time/zoned-date-time "2022-01-01T00:00Z[UTC]"}}]
+           (c2/q
+             tu/*node*
+             '{:find [p1],
+               :where [[(period #inst "2018" #inst "2022") p1]]})))
+
+  (t/is (thrown-with-msg?
+          RuntimeException
+          #"Start cannot be greater than end when constructing a period"
+          (c2/q
+            tu/*node*
+            '{:find [p1],
+              :where [[(period #inst "2022" #inst "2020") p1]]}))))
