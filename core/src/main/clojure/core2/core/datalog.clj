@@ -375,14 +375,51 @@
     1 {scan-col (first col-preds)}
     {scan-col (list* 'and col-preds)}))
 
+(def app-time-period-sym 'xt__app-time)
+(def app-time-start-sym 'application_time_start)
+(def app-time-end-sym 'application_time_end)
+(def app-temporal-cols {:period app-time-period-sym
+                        :start app-time-start-sym
+                        :end app-time-end-sym})
+
+
+(def sys-time-period-sym 'xt__sys-time)
+(def sys-time-start-sym 'system_time_start)
+(def sys-time-end-sym 'system_time_end)
+(def sys-temporal-cols {:period sys-time-period-sym
+                        :start sys-time-start-sym
+                        :end sys-time-end-sym})
+
+(defn replace-period-cols-with-temporal-attrs
+  [original_attrs]
+  (cond-> original_attrs
+    (contains? original_attrs app-time-period-sym)
+    (-> (disj app-time-period-sym)
+        (conj app-time-start-sym app-time-end-sym))
+
+    (contains? original_attrs sys-time-period-sym)
+    (-> (disj sys-time-period-sym)
+        (conj sys-time-start-sym sys-time-end-sym))))
+
+(defn create-period-constructor [match {:keys [period start end]}]
+  (when-let [[_ [_ lv]] (first (filter #(= period (first %)) match))]
+    (MapEntry/create (col-sym lv) {:start (col-sym start)
+                                   :end (col-sym end)})))
+
+(defn wrap-with-period-constructor [plan match]
+  (if-let [period-constructors (not-empty
+                                 (keep
+                                   #(create-period-constructor match %)
+                                   [app-temporal-cols sys-temporal-cols]))]
+    [:map [(into {} period-constructors)]
+     plan]
+    plan))
+
 (defn- plan-scan [table match temporal-opts]
   (let [original_attrs (set (keys match))
 
-        attrs (if (contains? original_attrs 'xt__app-time)
-                (-> original_attrs
-                    (disj 'xt__app-time)
-                    (conj 'application_time_start 'application_time_end))
-                original_attrs)
+        attrs (replace-period-cols-with-temporal-attrs original_attrs)
+
         attr->lits (-> match
                        (->> (keep (fn [[a [v-type v-arg]]]
                                     (when (= :literal v-type)
@@ -401,12 +438,7 @@
                                                               (list '= attr lit))))))))]
                  (with-meta {::vars attrs}))]
 
-    (if (contains? original_attrs 'xt__app-time)
-      (let [[_ [_ lv]] (first (filter #(= 'xt__app-time (first %)) match))]
-        [:map [{(col-sym lv) {:start (col-sym 'application_time_start)
-                              :end (col-sym 'application_time_end)} #_'(period application_time_start application_time_end)}]
-         plan])
-      plan)))
+    (wrap-with-period-constructor plan match)))
 
 (defn- attr->unwind-col [a]
   (col-sym "__uw" a))
@@ -456,9 +488,14 @@
        (let [match (->> match (mapv (fn [[a v]] (MapEntry/create (col-sym a) v))))
              var->cols (-> match
                            (->> (keep (fn [[a [v-type v-arg]]]
-                                        (prn :a a :v-type v-type :v-arg v-arg)
                                         (case v-type
-                                          :logic-var {:lv v-arg :col (if (= a 'xt__app-time) v-arg a)}
+                                          :logic-var {:lv v-arg
+                                                      :col (if (contains?
+                                                                 #{app-time-period-sym
+                                                                   sys-time-period-sym}
+                                                                 a)
+                                                             v-arg
+                                                             a)}
                                           :unwind {:lv (first v-arg), :col (attr->unwind-col a)}
                                           nil)))
                                 (group-by :lv))

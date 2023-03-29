@@ -1746,7 +1746,23 @@
                               {:for-app-time :all-time})
                        (match xt_cats [{:xt/app-time xt_cats_app_time :id id2}]
                               {:for-app-time :all-time})
-                       [(contains? xt_docs_app_time xt_cats_app_time)]]}))))
+                       [(contains? xt_docs_app_time xt_cats_app_time)]]})))
+
+  (t/is (= [{:id 1, :id2 2,
+             :xt_docs_sys_time {:start #time/zoned-date-time "2020-01-01T00:00Z[UTC]",
+                                :end #time/zoned-date-time "9999-12-31T23:59:59.999999Z[UTC]"},
+             :xt_cats_sys_time {:start #time/zoned-date-time "2020-01-01T00:00Z[UTC]",
+                                :end #time/zoned-date-time "9999-12-31T23:59:59.999999Z[UTC]"}}]
+           (c2/q
+             tu/*node*
+             '{:find [id id2 xt_docs_sys_time xt_cats_sys_time]
+               :where [(match xt_docs [id {:xt/sys-time xt_docs_sys_time}]
+                              {:for-app-time :all-time
+                               :for-sys-time :all-time})
+                       (match xt_cats [{:xt/sys-time xt_cats_sys_time :id id2}]
+                              {:for-app-time :all-time
+                               :for-sys-time :all-time})
+                       [(equals? xt_docs_sys_time xt_cats_sys_time)]]}))))
 
 (deftest test-period-constructor
   (t/is (= [{:p1 {:start #time/zoned-date-time "2018-01-01T00:00Z[UTC]",
