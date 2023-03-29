@@ -391,34 +391,39 @@
                         :end sys-time-end-sym})
 
 (defn replace-period-cols-with-temporal-attrs
-  [original_attrs]
-  (cond-> original_attrs
-    (contains? original_attrs app-time-period-sym)
+  [original-attrs]
+  (cond-> original-attrs
+    (contains? original-attrs app-time-period-sym)
     (-> (disj app-time-period-sym)
         (conj app-time-start-sym app-time-end-sym))
 
-    (contains? original_attrs sys-time-period-sym)
+    (contains? original-attrs sys-time-period-sym)
     (-> (disj sys-time-period-sym)
         (conj sys-time-start-sym sys-time-end-sym))))
 
 (defn create-period-constructor [match {:keys [period start end]}]
-  (when-let [[_ [_ lv]] (first (filter #(= period (first %)) match))]
-    (MapEntry/create (col-sym lv) {:start (col-sym start)
-                                   :end (col-sym end)})))
+  (when-let [[_ [lv-type lv]] (first (filter #(= period (first %)) match))]
+    (if (= :logic-var lv-type)
+      {(col-sym lv) (list 'period (col-sym start) (col-sym end))}
+
+      (throw (err/illegal-arg :temporal-period-requires-logic-var
+                              {::err/message "Temporal period must be bound to logic var"
+                               :period period
+                               :value lv})))))
 
 (defn wrap-with-period-constructor [plan match]
   (if-let [period-constructors (not-empty
                                  (keep
                                    #(create-period-constructor match %)
                                    [app-temporal-cols sys-temporal-cols]))]
-    [:map [(into {} period-constructors)]
+    [:map (vec period-constructors)
      plan]
     plan))
 
 (defn- plan-scan [table match temporal-opts]
-  (let [original_attrs (set (keys match))
+  (let [original-attrs (set (keys match))
 
-        attrs (replace-period-cols-with-temporal-attrs original_attrs)
+        attrs (replace-period-cols-with-temporal-attrs original-attrs)
 
         attr->lits (-> match
                        (->> (keep (fn [[a [v-type v-arg]]]
