@@ -533,48 +533,32 @@
                          :add-projection-fn add-projection-fn})))
 
 (defn expr-symbols [expr]
-  (if (symbol? expr)
-    (if (not (str/starts-with? (str expr) "£"))
-      #{expr}
-      #{})
-    (set
-      (w/postwalk
-        (fn [token]
-          (if (seq? token)
-            (mapcat
-              (fn [child]
-                (cond
-                  (seq? child)
-                  child
+  (cond (symbol? expr)
+        (if (not (str/starts-with? (str expr) "£"))
+          #{expr}
+          #{})
 
-                  (and (symbol? child)
-                       (not (str/starts-with? (str child) "£")))
-                  [child]))
-              (rest token))
-            token))
-        expr))))
+        (seq? expr)
+        (set
+          (w/postwalk
+            (fn [token]
+              (if (seq? token)
+                (mapcat
+                  (fn [child]
+                    (cond
+                      (seq? child)
+                      child
 
-(defn expr->columns [expr]
-  (if (symbol? expr)
-    (if (not (str/starts-with? (str expr) "£"))
-      #{expr}
-      #{})
-    (set
-      (w/postwalk
-        (fn [token]
-          (if (seq? token)
-            (mapcat
-              (fn [child]
-                (cond
-                  (seq? child)
-                  child
+                      (and (symbol? child)
+                           (not (str/starts-with? (str child) "£")))
+                      [child]))
+                  (rest token))
+                token))
+            expr))
+        :else
+        #{}))
 
-                  (and (symbol? child)
-                       (not (str/starts-with? (str child) "£")))
-                  [child]))
-              (rest token))
-            token))
-        expr))))
+(def expr->columns expr-symbols)
 
 
 (defn expr-correlated-symbols [expr]
