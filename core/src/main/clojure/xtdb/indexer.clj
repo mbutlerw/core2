@@ -448,7 +448,7 @@
                                       ^IIndirectRelation
                                       rel (iv/->indirect-rel (->> rel
                                                                   (map-indexed (fn [idx ^IIndirectVector col]
-                                                                                 (.withName col (str "?_" idx)))))
+                                                                                 (.withName col (str "£_" idx)))))
                                                              (.rowCount rel))
 
                                       selection (int-array 1)]

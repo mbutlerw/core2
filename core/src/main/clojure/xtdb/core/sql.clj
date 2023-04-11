@@ -30,7 +30,7 @@
         params (vw/open-params allocator
                                (->> (:? query-opts)
                                     (into {} (map-indexed (fn [idx v]
-                                                            (MapEntry/create (symbol (str "?_" idx)) v))))))]
+                                                            (MapEntry/create (symbol (str "£_" idx)) v))))))]
     (try
       (-> (.bind pq wm-src {:params params, :basis basis, :default-tz default-tz :default-all-app-time? default-all-app-time?})
           (.openCursor)
