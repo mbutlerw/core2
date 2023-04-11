@@ -1931,7 +1931,7 @@
                       [:rename {age _r0_age, name _r0_name, pid _r0_pid}
                        [:project [{pid id} name age]
                         [:scan {:table people, :for-app-time nil, :for-sys-time nil}
-                         [age name {id (= id ?pid)}]]]]]]}]
+                         [age name {id (= id £pid)}]]]]]]}]
 
            (xt/q tu/*node*
                  '{:find [name age]

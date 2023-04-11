@@ -600,31 +600,6 @@
 (defn columns [relation]
   (set (keys (:col-types relation))))
 
-(defn expr->columns [expr]
-  (if (symbol? expr)
-    (if (not (clojure.string/starts-with? (str expr) "?"))
-      #{expr}
-      #{})
-    (set
-      (walk/postwalk
-        (fn [token]
-          (if (seq? token)
-            (mapcat
-              (fn [child]
-                (cond
-                  (seq? child)
-                  child
-
-                  (and (symbol? child)
-                       (not (clojure.string/starts-with? (str child) "?")))
-                  [child]))
-              (rest token))
-            token))
-        expr))))
-
-(defn remove-params [maybe-cols-and-params]
-  (set (remove #(str/starts-with? (str %) "?") maybe-cols-and-params)))
-
 (defn adjust-to-equi-condition
   "Swaps the sides of equi conditions to match location of cols in plan
   or rewrite simple equals predicate condition as equi condition"
@@ -633,7 +608,7 @@
     (let [equi-join-cond (last condition)
           lhs (first (keys equi-join-cond))
           rhs (first (vals equi-join-cond))
-          lhs-cols (expr->columns lhs)]
+          lhs-cols (lp/expr->columns lhs)]
       (if (= (:cols-from-current-rel join-condition) lhs-cols)
         condition
         [:equi-condition {rhs lhs}]))
@@ -737,9 +712,9 @@
   (if (= condition-type :equi-condition)
     (let [[lhs rhs] (first condition)]
       (set/union
-        (expr->columns rhs)
-        (expr->columns lhs)))
-    (expr->columns condition)))
+        (lp/expr->columns rhs)
+        (lp/expr->columns lhs)))
+    (lp/expr->columns condition)))
 
 (defmethod lp/emit-expr :mega-join [{:keys [conditions relations]} args]
   (let [conditions-with-cols (->> conditions

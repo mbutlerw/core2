@@ -204,7 +204,7 @@
 
 (defn- col-sym
   ([col]
-   (-> (symbol col) util/ns-symbol->symbol (vary-meta assoc :column? true)))
+   (-> (symbol col) util/ns-symbol->symbol))
   ([prefix col]
    (col-sym (str (format "%s_%s" prefix col)))))
 
@@ -342,14 +342,13 @@
                                 set)}))
 
 (defn- ->param-sym [lv]
-  (-> (symbol (str "?" (name lv)))
-      (with-meta {::param? true})))
+  (symbol (str "£" (name lv))))
 
 (defn- plan-in-tables [{in-bindings :in}]
   (let [in-bindings (->> in-bindings
                          (into [] (map-indexed
                                    (fn [idx [binding-type binding-arg]]
-                                     (let [table-key (symbol (str "?in" idx))]
+                                     (let [table-key (symbol (str "£in" idx))]
                                        (-> (case binding-type
                                              :scalar {::vars #{binding-arg}, ::in-cols [(->param-sym binding-arg)]}
                                              :tuple {::vars (set binding-arg), ::in-cols (mapv ->param-sym binding-arg)}
@@ -522,7 +521,7 @@
        ([prefix] (symbol (str prefix suffix (swap! ctr inc))))))))
 
 (defn scalar-sub-query-placeholder [sub-query]
-  (with-meta (*gensym* "_sq") {::sub-query sub-query, :column? true}))
+  (with-meta (*gensym* "_sq") {::sub-query sub-query}))
 
 (defn scalar-sub-query-referent [sub-query-placeholder]
   (::sub-query (meta sub-query-placeholder)))
@@ -539,7 +538,7 @@
 (defn- plan-call [{:keys [form return]}]
   (letfn [(with-col-metadata [[form-type form-arg]]
             (case form-type
-              :logic-var [:logic-var (if (str/starts-with? (name form-arg) "?")
+              :logic-var [:logic-var (if (str/starts-with? (name form-arg) "£")
                                        form-arg
                                        (col-sym form-arg))]
               :fn-call [:fn-call (-> form-arg (update :args #(mapv with-col-metadata %)))]
@@ -559,8 +558,7 @@
   ;; (where an apply is nested inside the dep side of another apply)
   (when (seq apply-params)
     (->> (for [param apply-params]
-           (let [param-symbol (-> (symbol (str "?ap_" param))
-                                  (with-meta {:correlated-column? true}))]
+           (let [param-symbol (symbol (str "££_" param))]
              (MapEntry/create param param-symbol)))
          (into {}))))
 
@@ -642,7 +640,7 @@
                    (-> (if apply-mapping
                          [:apply sj-type (merge apply-mapping provided-vars-apply-mapping)
                           acc (->> provided-vars-apply-mapping
-                                   (map (fn [[v1 v2]] (list '= (with-meta v1 {:column? true}) v2)))
+                                   (map (fn [[v1 v2]] (list '= v1 v2)))
                                    (wrap-select sq-plan))]
                          [sj-type (->> (::vars (meta sq-plan))
                                        (filter vars)

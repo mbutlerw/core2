@@ -27,7 +27,7 @@
 (s/def ::value (some-fn string? number? inst? keyword? (partial instance? LocalDate)))
 
 (s/def ::param
-  (s/and simple-symbol? #(str/starts-with? (name %) "?")))
+  (s/and simple-symbol? #(str/starts-with? (name %) "£")))
 
 (s/def ::expression any?)
 
@@ -327,7 +327,7 @@
                              (if (= op :map)
                                smap
                                (->> smap
-                                    (filter #(str/starts-with? (name (key %)) "?"))
+                                    (filter #(str/starts-with? (name (key %)) "£"))
                                     (into {})))
                              projection)
 
@@ -406,7 +406,7 @@
       (let [smap (->smap relation)]
         (with-smap relation
           (if (symbol? prefix-or-columns)
-            (update-keys smap #(if (str/starts-with? (name %) "?")
+            (update-keys smap #(if (str/starts-with? (name %) "£")
                                  %
                                  (symbol (str prefix-or-columns relation-prefix-delimiter %))))
             (set/rename-keys smap prefix-or-columns))))
@@ -465,14 +465,12 @@
       (let [smap (merge (->smap independent-relation) (->smap dependent-relation))
             params (->> columns
                         (vals)
-                        (filter #(str/starts-with? (name %) "?"))
+                        (filter #(str/starts-with? (name %) "££"))
                         (map (fn [param]
                                {param (get
                                         smap
                                         param
-                                        (with-meta
-                                          (symbol (str "?" (next-name)))
-                                          {:correlated-column? true}))}))
+                                        (symbol (str "££" (next-name))))}))
                         (into {}))
             mark-join-mode-projection-smap (when-let [[column _expr] (first (:mark-join mode))]
                                              {column (next-name)})
@@ -535,24 +533,57 @@
                          :add-projection-fn add-projection-fn})))
 
 (defn expr-symbols [expr]
-  (set (for [x (flatten (if (coll? expr)
-                          (seq expr)
-                          [expr]))
-             :when (and (symbol? x)
-                        (:column? (meta x)))]
-         x)))
+  (if (symbol? expr)
+    (if (not (str/starts-with? (str expr) "£"))
+      #{expr}
+      #{})
+    (set
+      (w/postwalk
+        (fn [token]
+          (if (seq? token)
+            (mapcat
+              (fn [child]
+                (cond
+                  (seq? child)
+                  child
+
+                  (and (symbol? child)
+                       (not (str/starts-with? (str child) "£")))
+                  [child]))
+              (rest token))
+            token))
+        expr))))
+
+(defn expr->columns [expr]
+  (if (symbol? expr)
+    (if (not (str/starts-with? (str expr) "£"))
+      #{expr}
+      #{})
+    (set
+      (w/postwalk
+        (fn [token]
+          (if (seq? token)
+            (mapcat
+              (fn [child]
+                (cond
+                  (seq? child)
+                  child
+
+                  (and (symbol? child)
+                       (not (str/starts-with? (str child) "£")))
+                  [child]))
+              (rest token))
+            token))
+        expr))))
+
 
 (defn expr-correlated-symbols [expr]
   (set (for [x (flatten (if (coll? expr)
                           (seq expr)
                           [expr]))
              :when (and (symbol? x)
-                        (:correlated-column? (meta x)))]
+                        (str/starts-with? (str x) "££"))]
          x)))
-
-(defn column? [x]
-  (and (symbol? x)
-       (:column? (meta x))))
 
 (defn equals-predicate? [predicate]
   (and (sequential? predicate)
@@ -695,14 +726,18 @@
   (into
     {}
     (filter
-      #(and (map? %) (column? (val (first %))))
+      #(and (map? %) (symbol? (val (first %))))
       projection-spec)))
 
 (defn- predicate-depends-on-calculated-column? [predicate projection-spec]
   (not-empty (set/intersection (set (expr-symbols predicate))
-                               (set (keep #(when (and (map? %) (not (column? (val (first %)))))
-                                             (key (first %)))
-                                          projection-spec)))))
+                               (set
+                                 (keep
+                                   #(when
+                                      (and (map? %)
+                                           (not (symbol? (val (first %)))))
+                                      (key (first %)))
+                                       projection-spec)))))
 
 (defn- push-selection-down-past-project [push-correlated? z]
   (r/zmatch z

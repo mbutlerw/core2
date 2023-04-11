@@ -24,7 +24,7 @@
                                        :row-number-column (s/map-of ::lp/column #{'(row-number)}, :conform-keys true, :count 1)
                                        ;; don't do this for params, because they aren't real cols
                                        ;; the EE handles these through `:extend`
-                                       :rename (s/map-of ::lp/column (s/and ::lp/column #(not (str/starts-with? (name %) "?")))
+                                       :rename (s/map-of ::lp/column (s/and ::lp/column #(not (str/starts-with? (name %) "£")))
                                                          :conform-keys true, :count 1)
                                        :extend ::lp/column-expression))
          :relation ::lp/ra-expression))

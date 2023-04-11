@@ -789,13 +789,13 @@
 
     [:dynamic_parameter_specification _]
     ;;=>
-    (symbol (str "?_" (sem/dynamic-param-idx z)))
+    (symbol (str "£_" (sem/dynamic-param-idx z)))
 
     ;; $1, $2, $3 etc will share symbol with :dynamic_parameter_specification for now
     ;; we will dec the ints as our params are zero-based unlike postgres 1-based. So $1 will become ?_0, $2 ?_1 and so on.
     [:postgres_parameter_specification s]
     ;; =>
-    (symbol (str "?_" (dec (parse-long (subs s 1)))))
+    (symbol (str "£_" (dec (parse-long (subs s 1)))))
 
     [:period_contains_predicate ^:z p1_predicand [:period_contains_predicate_part_2 _ ^:z p2_predicand]]
     ;;=>
@@ -862,7 +862,7 @@
                           true)
                         (not= type :within-group-varying))
              :let [column-reference-symbol (column-reference-symbol column-reference)
-                   param-symbol (symbol (str "?" column-reference-symbol))]]
+                   param-symbol (symbol (str "££" column-reference-symbol))]]
 
          [column-reference-symbol param-symbol])
        (into {}))))
@@ -930,7 +930,7 @@
   (zipmap
     columns
     (map
-      #(->> % (name) (str "?") (symbol)) columns)))
+      #(->> % (name) (str "££") (symbol)) columns)))
 
 (defn- interpret-subquery
   "Returns a map of data about the given subquery AST zipper.
