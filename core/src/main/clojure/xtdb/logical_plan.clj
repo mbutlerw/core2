@@ -585,7 +585,7 @@
 (defn- all-columns-across-both-relations-with-one-in-each?
   "Returns true if all columns are present across both relations, with at least one column in each"
   [expr left-relation right-relation]
- (let [columns (expr-symbols expr)]
+ (let [columns (set (mapcat expr-symbols expr))]
    (-> columns
        (set/difference (set (relation-columns left-relation)))
        (not-empty)
